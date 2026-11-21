@@ -197,6 +197,12 @@ export function verificationServerEnvironment(parentEnv: NodeJS.ProcessEnv, data
     childEnv.OMB_OPENAI_LIVE_URL = liveUrl;
     if (parentEnv.OMB_OPENAI_LIVE_KEY) childEnv.OMB_OPENAI_LIVE_KEY = parentEnv.OMB_OPENAI_LIVE_KEY;
   }
+  // A loopback stand-in for the long-term memory service only (server/external-memory.ts): no test sends turns anywhere else.
+  const memoryUrl = parentEnv.OMB_EXTERNAL_MEMORY_URL?.trim() ?? "";
+  if (/^http:\/\/127\.0\.0\.1:\d{1,5}$/.test(memoryUrl)) {
+    childEnv.OMB_EXTERNAL_MEMORY_URL = memoryUrl;
+    if (parentEnv.OMB_EXTERNAL_MEMORY_TOKEN) childEnv.OMB_EXTERNAL_MEMORY_TOKEN = parentEnv.OMB_EXTERNAL_MEMORY_TOKEN;
+  }
   // A loopback stand-in for Postiz Cloud only (server/testing/fake-postiz.ts): no test signs in to the real one.
   const postizUrl = parentEnv.OMB_POSTIZ_CLOUD_URL?.trim() ?? "";
   if (/^http:\/\/127\.0\.0\.1:\d{1,5}$/.test(postizUrl)) childEnv.OMB_POSTIZ_CLOUD_URL = postizUrl;

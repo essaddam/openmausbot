@@ -1,0 +1,32 @@
+{
+  "name": "maus-memory",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Long-term memory for OpenMausBot bots: per-bot dated facts, RAG and a knowledge graph in Postgres (pgvector + Apache AGE).",
+  "license": "Apache-2.0",
+  "type": "module",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "bin": {
+    "maus-memory": "src/server.ts",
+    "maus-memory-mcp": "src/mcp.ts"
+  },
+  "scripts": {
+    "start": "node src/server.ts",
+    "mcp": "node src/mcp.ts",
+    "migrate": "node src/migrate.ts",
+    "test": "node --test --test-concurrency=1 test/*.test.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "pg": "8.23.1",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.5",
+    "@types/pg": "8.23.1",
+    "typescript": "7.0.2"
+  }
+}

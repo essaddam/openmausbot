@@ -118,7 +118,7 @@ import * as composio from "./composio.ts"; import { createConnectorListingRoutes
 import { appSandboxRule, connectorCallFromFrame, connectorRefusalText, connectorScopeRefusalText, connectorUnrecognizedText, evaluateConnectorTools } from "./connector-verdict.ts";
 import { signInCardText } from "./connector-card-text.ts";
 import { BOT_HELD_CODE, BOT_PAUSED_CODE } from "../shared/bot-limit.ts"; import { createBotHolds } from "./host/bot-holds.ts"; import { createBotHoldRoutes } from "./routes/bot-holds.ts"; import { createCliLogin } from "./routes/cli-login.ts"; import { createStarterAwake } from "./host/starter-awake.ts"; import { createStarterCaps } from "./host/starter-caps.ts"; import { createStarterRoutineWake, workInFlight, type StarterRoutineWake } from "./host/starter-routine-wake.ts"; import { createStarterAwakeRoutes } from "./routes/starter-awake.ts"; import { chiefOfStaffPrompt, chiefOfStaffSystemPrompt } from "./chief-of-staff.ts"; import { coordinateMessageMax, coordinateTooLong, reportBackTooLong } from "./too-long.ts"; import { chiefAbsentFrom, createChiefRooms } from "./host/chief-rooms.ts"; import { chiefLevel, readTeamRolesWith } from "./chief-level.ts"; import { defaultBotRefusal, ensureDefaultBot } from "./default-bot.ts";
-import { buildRecall, recallRooms, recallThreadIds, withRecalled } from "./recall.ts";
+import { buildRecall, recallRooms, recallThreadIds, withRecalled, type RecallPassage } from "./recall.ts"; import { createExternalMemory, resolveExternalMemoryConfig } from "./external-memory.ts";
 import { hostTimeZone, takesTurnClock, turnClockLine, withTurnClock } from "./turn-clock.ts";
 import { createMemoryUpkeep, dreamConversations, upkeepEnabled } from "./memory-upkeep.ts";
 import { createCacheKeepWarm, type KeepWarmStatus, type KeepWarmTarget } from "./cache-keepwarm.ts";
@@ -1143,7 +1143,7 @@ function recallThreads(from: BotRecord, capability: Parameters<typeof cloudLendi
 }
 
 /** Other conversations only for a 1:1 turn the person started: another bot, a webhook or a room must not pull a private chat into its reply. */
-function autoRecallPrompt(bot: BotRecord, threadId: string, message: string, opts: { conversations: boolean; userName: PersonName }): string {
+function autoRecallPrompt(bot: BotRecord, threadId: string, message: string, opts: { conversations: boolean; userName: PersonName; extra?: readonly RecallPassage[] }): string {
   if (bot.memoryEnabled === false || !autoRecallEnabled(cfg)) return "";
   const roomByThread = opts.conversations ? recallRooms(store.groups, bot, roomFeedsBot) : new Map<string, GroupRecord>();
   const threadIds = opts.conversations
@@ -1153,7 +1153,7 @@ function autoRecallPrompt(bot: BotRecord, threadId: string, message: string, opt
     const recalled = buildRecall({
       botId: bot.id, memoryIds: teamHost.memoryIds(bot.id, threadId),
       message,
-      threadIds,
+      threadIds, extra: opts.extra,
       label: (id) => {
         const room = roomByThread.get(id);
         if (room) return `room ${JSON.stringify(room.name)}`;
@@ -1163,7 +1163,7 @@ function autoRecallPrompt(bot: BotRecord, threadId: string, message: string, opt
       },
       author: (hit) => (hit.role === "user" ? hit.peer ?? personOf(opts.userName, typeof opts.userName === "string" ? {} : store.messagesFor(hit.threadId).find((line) => line.id === hit.messageId) ?? {}) : hit.from ?? bot.name),
     });
-    if (recalled) console.log(`auto-recall: ${bot.name} (${bot.id}) got ${recalled.notes} note and ${recalled.conversations} conversation passage(s) in ${threadId}`);
+    if (recalled) console.log(`auto-recall: ${bot.name} (${bot.id}) got ${recalled.notes} note and ${recalled.conversations} conversation passage(s) in ${threadId}${opts.extra?.length ? `, ${opts.extra.length} from long-term memory` : ""}`);
     return recalled?.text ?? "";
   } catch (err) {
     console.warn(`auto-recall failed for ${bot.id}: ${(err as Error).message}`);
@@ -2932,7 +2932,7 @@ function previewSystemPrompt(bot: BotRecord) {
     { id: "section-context", label: "Section context", text: sectionContextSystemPrompt(bot.section) },
     { id: "team-memory", label: "Team memory", text: teamMemory.systemPrompt(bot.section) + (agentsMounted ? TEAM_MEMORY_PROMPT : "") },
     teamAvailabilityPart(agentsMounted && coordination ? peers : []),
-    { id: "memory-rules", label: "How memory works", text: memoryRulesPrompt(bot.id, { managedWrites: agentsMounted, fileTools: Boolean(privateWorkspace), enabled: bot.memoryEnabled !== false }) }, { id: "memory", label: "Memory", text: memoryNotesPrompt(bot.id, { managedWrites: agentsMounted, fileTools: Boolean(privateWorkspace), enabled: bot.memoryEnabled !== false }) },
+    { id: "memory-rules", label: "How memory works", text: memoryRulesPrompt(bot.id, { managedWrites: agentsMounted, fileTools: Boolean(privateWorkspace), enabled: bot.memoryEnabled !== false }) }, { id: "memory", label: "Memory", text: memoryNotesPrompt(bot.id, { managedWrites: agentsMounted, fileTools: Boolean(privateWorkspace), enabled: bot.memoryEnabled !== false }) + (bot.memoryEnabled !== false ? externalMemory.corePrompt(bot.id) : "") },
     { id: "skills", label: "Skills index", text: privateWorkspace ? skillsHost.skillsIndex(bot, undefined, instance) : "" },
   ], agentsMounted ? { env: agentsToolBridgeEnv(cfg, bot, instance && turnEngine(instance, providerConfigs(), registry.lastSnapshot(instance.instanceId), bot.cwd ?? undefined)) } : undefined, { replyStyle: bot.replyStyle, rules: cfg.everyBotRules });
   const totalBytes = built.sections.reduce((n, s) => n + s.bytes, 0);
@@ -5066,7 +5066,7 @@ const personPreference = createPersonPreference<InternalCapability>({ team: Bool
 const setupSuggestions = setupSuggestionsFor({ store, config: () => cfg, shared: sharedMembership, languageCode: personLanguages.forPlace, engine: (bot) => registry.get(bot.modelSelection.instanceId)?.adapter.capabilities, browserOn: () => builtInBrowserEnabled(cfg),
   withinBudget: () => { try { assertWithinBudget(cfg, DATA_DIR); return true; } catch { return false; } }, writer: (botId) => sideJobs.text("setup-suggestions", botId), apps: { configured: () => composio.configured(cfg), mode: () => composio.connectionMode(cfg), connected: () => composio.connectedServices(cfg) }, log: (line) => console.log(line) });
 
-const memoryUpkeep = createMemoryUpkeep({
+const externalMemory = createExternalMemory({ config: () => resolveExternalMemoryConfig(cfg.memory?.external, process.env) }); const memoryUpkeep = createMemoryUpkeep({
   bots: () => { const paused = new Set(starterAwake.paused()); return store.bots.filter((bot) => !paused.has(bot.id) && !botHolds.held(bot.id)); },
   bot: (id) => store.bot(teamHost.baseBotId(id)) ?? undefined,
   engine: (botId) => sideJobs.text("memory", teamHost.baseBotId(botId)),
@@ -5258,16 +5258,16 @@ bus.subscribe((event: RuntimeEvent) => {
       const reply = store.activePath(event.threadId).findLast((message) => message.role === "bot" && message.kind === "text" && message.turnId === event.turnId);
       const member = reply?.from ? store.bot(reply.from.botId) : undefined;
       if (!roomCaptureAllowed(room, member) || isUnattended(member.id, event.threadId)) return;
-      const turn = captureRoomTurnFor(event.threadId, member.id, event.turnId);
-      if (turn) memoryUpkeep.noteTurn(teamHost.layer(member.id, event.threadId), event.threadId, turn);
+      const turn = captureRoomTurnFor(event.threadId, member.id, event.turnId), layer = teamHost.layer(member.id, event.threadId);
+      if (turn) memoryUpkeep.noteTurn(layer, event.threadId, turn); if (turn && externalMemory.enabledFor(member)) externalMemory.noteTurn({ botId: layer, botName: member.name, threadId: event.threadId, turn });
       return;
     }
-    const bot = store.botByThread(event.threadId);
-    if (!bot || !upkeepEnabled(bot) || isInternalTurn(event.threadId)
+    const bot = store.botByThread(event.threadId) ?? undefined, toUpkeep = upkeepEnabled(bot), toExternal = externalMemory.enabledFor(bot);
+    if (!bot || !(toUpkeep || toExternal) || isInternalTurn(event.threadId)
       || isUnattended(bot.id, event.threadId) || routines?.runForThread(event.threadId)) return;
     if (CLOUD_PERSONAL && !cloudOwnerOnlyThread(event.threadId)) return;
-    const turn = captureTurnFor(event.threadId, event.turnId);
-    if (turn) memoryUpkeep.noteTurn(teamHost.layer(bot.id, event.threadId), event.threadId, teamHost.ownTurn(event.threadId) ? { ...turn, owner: true } : turn);
+    const captured = captureTurnFor(event.threadId, event.turnId), turn = captured && teamHost.ownTurn(event.threadId) ? { ...captured, owner: true } : captured, layer = teamHost.layer(bot.id, event.threadId);
+    if (turn && toUpkeep) memoryUpkeep.noteTurn(layer, event.threadId, turn); if (turn && toExternal) externalMemory.noteTurn({ botId: layer, botName: bot.name, threadId: event.threadId, turn });
   } catch (error) {
     console.warn(`memory upkeep: could not queue a turn for capture: ${(error as Error).message}`);
   }
@@ -8300,7 +8300,7 @@ async function beginTurn(
         // Volatile, so a teammate starting or finishing never changes the stable half.
         teamAvailabilityPart(coordinationPrompt ? sectionPeers : []),
         { id: "recent", label: "Recent work", text: recentWorkPrompt(recentWork(recentWorkSources(bot), bot, { userName: CLOUD_TEAM ? teamHost.personName(teamConversationPerson(threadId)) ?? "the team" : cfg.profile?.name?.trim() || "User", currentThreadId: threadId, ...recentWorkFilter(threadId) })) },
-        { id: "memory-rules", label: "How memory works", text: memoryRulesPrompt(teamHost.layer(bot.id, threadId), memoryOpts) }, { id: "memory", label: "Memory", text: memoryNotesPrompt(teamHost.layer(bot.id, threadId), memoryOpts) + teamHost.sharedNotesPrompt(bot.id, threadId) },
+        { id: "memory-rules", label: "How memory works", text: memoryRulesPrompt(teamHost.layer(bot.id, threadId), memoryOpts) }, { id: "memory", label: "Memory", text: memoryNotesPrompt(teamHost.layer(bot.id, threadId), memoryOpts) + teamHost.sharedNotesPrompt(bot.id, threadId) + (memoryOpts.enabled ? externalMemory.corePrompt(teamHost.layer(bot.id, threadId)) : "") },
         // liveBot predates awaited setup work; an assignment PUT in that window must still reach this prompt.
         { id: "skills", label: "Skills index", text: privateWorkspace ? skillsHost.skillsIndex(store.bot(bot.id) ?? bot, threadId, instance, cwd ?? null) : "" },
         { id: "skill-instructions", label: "Skill instructions", text: skillInstructions },
@@ -8314,7 +8314,7 @@ async function beginTurn(
       const recalled = autoRecallPrompt(bot, threadId, resolvedImages.text, {
         // A routine run starts fresh, and a webhook is untrusted: neither pulls earlier conversations in.
         conversations: commsDepth === 0 && !coordinationNode && !opts?.automationSource && !opts?.unattended && !apiFenced,
-        userName: userNameFor(threadId),
+        userName: userNameFor(threadId), extra: apiFenced ? [] : await externalMemory.recallFor(bot, teamHost.layer(bot.id, threadId), resolvedImages.text, autoRecallEnabled(cfg)),
       });
       if (!directTurnClaimIsCurrent(bot.id, dispatchClaimId, threadId)) {
         throw new DirectTurnSetupCancelled("turn stopped before dispatch");
@@ -10022,7 +10022,7 @@ async function runClaimedGroupMemberTurn(
     const drift = checkSoulDrift(bot.id, bot.soul ?? "", bot.soulHash ?? "");
     if (drift.drift !== Boolean(bot.soulDrift)) store.patchBot(bot.id, { soulDrift: drift.drift });
   }
-  const roomMemoryOpts = { managedWrites: Boolean(integrations.agents), fileTools: worksInWorkspace, enabled: bot.memoryEnabled !== false }, roomMemory = memoryNotesPrompt(teamHost.layer(bot.id, threadId), roomMemoryOpts) + teamHost.sharedNotesPrompt(bot.id, threadId);
+  const roomMemoryOpts = { managedWrites: Boolean(integrations.agents), fileTools: worksInWorkspace, enabled: bot.memoryEnabled !== false }, roomMemory = memoryNotesPrompt(teamHost.layer(bot.id, threadId), roomMemoryOpts) + teamHost.sharedNotesPrompt(bot.id, threadId) + (roomMemoryOpts.enabled ? externalMemory.corePrompt(teamHost.layer(bot.id, threadId)) : "");
   const recentLines = recentWork(recentWorkSources(bot), bot, { userName: typeof userName === "string" ? userName : "the team", currentThreadId: threadId, ...recentWorkFilter(threadId) });
   recordTurnPlace(bot.id, threadId, (roomTeamComputer ? "cloud" : roomVmTarget ? "vm" : surfaceOfComputerKind(roomComputerKind)) ?? (integrations.browser ? "browser" : null));
   const roomComputerPromptKind = resolveComputerPromptKind({
@@ -10119,7 +10119,7 @@ async function runClaimedGroupMemberTurn(
       ? liveGroup.turnTimeoutMinutes
       : store.groupTaskByThread(liveGroup.id, threadId)?.turnTimeoutMinutes,
   );
-  const outcome = await new Promise<GroupMemberTurnOutcome>((resolve) => {
+  const roomLongTermRecall = cardContinuation ? [] : await externalMemory.recallFor(bot, teamHost.layer(bot.id, threadId), resolvedLatestImages.text, autoRecallEnabled(cfg)); const outcome = await new Promise<GroupMemberTurnOutcome>((resolve) => {
     let done = false;
     let unsub = () => {};
     let unregisterStall = () => {};
@@ -10180,7 +10180,7 @@ async function runClaimedGroupMemberTurn(
     runningTurnEngines.set(threadId, instance);
     const roomSelection = roomTakeover ? turnSelection : readyBot.modelSelection; roomLimits.dispatched(threadId, roomSelection);
     // A private chat reaches a room only through the explicit, disclosed session_search, never automatically.
-    const roomRecalled = cardContinuation ? "" : autoRecallPrompt(bot, threadId, resolvedLatestImages.text, { conversations: false, userName });
+    const roomRecalled = cardContinuation ? "" : autoRecallPrompt(bot, threadId, resolvedLatestImages.text, { conversations: false, userName, extra: roomLongTermRecall });
     const turnApprovalMode = roomTurnApprovalMode(readyBot, threadId, orchestration);
     if (!done) releaseTurnLevel = roomTurnLevels.dispatched(threadId, readyBot.id, turnApprovalMode);
     const { reset: roomReset, displaced } = roomMemberContexts.dispatch(threadId, readyBot.id, instance.instanceId, cfg.context);
@@ -15163,7 +15163,7 @@ server.listen(PORT, listenHost(server), async () => {
   // Only once every registry is initialized and the endpoint listens: earlier dispatch can hit uninitialized bindings.
   moveFreeze.hold(() => { routines!.start(); botWaits.start(); checkBacks.start(); proactive.start(); }, () => { routines!.stop(); botWaits.stop(); checkBacks.stop(); proactive.stop(); });
   limitClock.start(); burst.recover(); handoffStatus.changed();
-  moveFreeze.hold(() => memoryUpkeep.start(), () => memoryUpkeep.stop());
+  moveFreeze.hold(() => memoryUpkeep.start(), () => memoryUpkeep.stop()); void externalMemory.warm(store.bots.filter((bot) => bot.memoryEnabled !== false).map((bot) => bot.id));
 });
 
 // Requests on this socket (the phone tunnel, or the compose files' Caddy in its own container) have no peer address, which request-auth treats as proxied: a session is required, never loopback trust.

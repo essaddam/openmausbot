@@ -1,0 +1,58 @@
+name: maus-memory
+
+services:
+  postgres:
+    build:
+      context: ./docker/postgres
+      args:
+        POSTGRES_IMAGE: ${POSTGRES_IMAGE:-postgres:16-bookworm}
+    environment:
+      POSTGRES_USER: maus
+      POSTGRES_PASSWORD: ${MAUS_DB_PASSWORD:?set MAUS_DB_PASSWORD in .env}
+      POSTGRES_DB: maus
+    volumes:
+      - maus-pg:/var/lib/postgresql/data
+    # Loopback only: the per-bot MCP servers OpenMausBot starts on this machine read the database directly.
+    ports:
+      - "127.0.0.1:${MAUS_DB_PORT:-5433}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U maus -d maus"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  memory:
+    build:
+      context: .
+      args:
+        NODE_IMAGE: ${NODE_IMAGE:-node:22-bookworm-slim}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      MAUS_DATABASE_URL: postgres://maus:${MAUS_DB_PASSWORD}@postgres:5432/maus
+      MAUS_MEMORY_TOKEN: ${MAUS_MEMORY_TOKEN:?set MAUS_MEMORY_TOKEN in .env}
+      MAUS_EMBEDDINGS: ${MAUS_EMBEDDINGS:-none}
+      MAUS_EMBEDDINGS_URL: ${MAUS_EMBEDDINGS_URL:-http://ollama:11434}
+      MAUS_EMBEDDINGS_MODEL: ${MAUS_EMBEDDINGS_MODEL:-bge-m3}
+      MAUS_EMBEDDINGS_KEY: ${MAUS_EMBEDDINGS_KEY:-}
+      MAUS_LLM: ${MAUS_LLM:-none}
+      MAUS_LLM_URL: ${MAUS_LLM_URL:-}
+      MAUS_LLM_MODEL: ${MAUS_LLM_MODEL:-}
+      MAUS_LLM_KEY: ${MAUS_LLM_KEY:-}
+      MAUS_DREAM_QUIET_MS: ${MAUS_DREAM_QUIET_MS:-600000}
+    ports:
+      - "127.0.0.1:${MAUS_PORT:-8787}:8787"
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama
+    profiles: ["ollama"]
+    volumes:
+      - ollama:/root/.ollama
+    restart: unless-stopped
+
+volumes:
+  maus-pg:
+  ollama:

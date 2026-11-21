@@ -120,6 +120,8 @@ export interface RecallInput {
   threadIds: readonly string[];
   label: (threadId: string) => string;
   author: (hit: RecallHit) => string;
+  /** Passages another memory already found for this message (server/external-memory.ts); they come first. */
+  extra?: readonly RecallPassage[];
 }
 
 const TOPIC_PASSAGE_CHARS = 600;
@@ -190,7 +192,7 @@ export function buildRecall(input: RecallInput): RecallResult | null {
   const memoryIds = input.memoryIds?.length ? input.memoryIds : [input.botId];
   const topics = memoryIds.flatMap((id) => topicPassages(id, query));
   const notes = selectMemoryPassages(memoryIds.flatMap((id) => memoryPassages(id, query)), topics);
-  return renderRecall([...notes, ...conversationPassages(input, query)]);
+  return renderRecall([...(input.extra ?? []), ...notes, ...conversationPassages(input, query)]);
 }
 
 export function selectMemoryPassages(matches: readonly RecallPassage[], topics: readonly RecallPassage[]): RecallPassage[] {

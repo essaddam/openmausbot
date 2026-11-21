@@ -294,6 +294,14 @@ count toward the monthly spend limit and stop at it. Each is its own row in
 engine and model: group by **Person** to see them together as *Helper
 model*, which is also what the CSV's `triggered_by` column says.
 
+## A long-term memory service beside the app
+
+`memory.external` in `config.json` (or `OMB_EXTERNAL_MEMORY_URL`) sends the
+turns upkeep captures to a memory service of your own and adds its recall and
+core facts to each turn, alongside these notes. The bundled one,
+`plugins/maus-memory`, keeps dated facts, hybrid search and a knowledge graph in
+Postgres. See [external-memory.md](external-memory.md).
+
 ## Remember and forget, in chat
 
 "Remember: short answers, and I'm in India" is saved during that turn with

@@ -138,6 +138,8 @@ export function createConfigRoutes(deps: ConfigRouteDeps): RouteHandler {
     }
     if ((method === "PUT" || method === "PATCH") && path === "/api/config") {
       const body = await readBody(req);
+      // Every captured turn goes to that address, so only whoever runs the server sets it: in config.json or the environment.
+      if (body.memory && typeof body.memory === "object" && Object.hasOwn(body.memory, "external")) return json(res, 403, { error: "Set memory.external in config.json or OMB_EXTERNAL_MEMORY_URL on the server." });
       if (hostedModels && ["instances", "anthropic", "openai", "openrouter", "openaiCompat", "xai", "mistral", "cerebras", "groq", "greenference", "modelgo", "meta", "opencodeGo"].some(key => Object.hasOwn(body, key))) return json(res, 403, { error: HOSTED_PROVIDER_SETTINGS_ERROR });
       const patch = parseConfigPatchForPerson(body);
       if (deps.cloudTeam && patch.browserEngine?.egress?.proxy !== undefined && !(auth.kind === "session" && auth.session.teamRole === "owner")) {
